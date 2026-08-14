@@ -1,10 +1,21 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QScrollArea, QLabel, QFrame, 
-                             QComboBox, QInputDialog, QMessageBox)
+                             QInputDialog, QMessageBox, QToolButton, QMenu)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QAction
 import webbrowser
-from core.worker import SearchWorker, FetchLinksWorker, ImageDownloader
+from core.worker import SearchWorker, FetchLinksWorker, ImageDownloader, shared_scraper
+
+
+class HoverToolButton(QToolButton):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+
+    def enterEvent(self, event):
+        self.showMenu()
+        super().enterEvent(event)
+
 
 class ResultCard(QFrame):
     def __init__(self, site_name, title, post_url, version, image_url=""):
@@ -21,13 +32,9 @@ class ResultCard(QFrame):
             }
         """)
 
-        # لایوت اصلی کارت (عمودی)
         self.main_layout = QVBoxLayout(self)
-
-        # لایوت افقی بالای کارت (تصویر + اطلاعات)
         top_layout = QHBoxLayout()
 
-        # ساخت لیبل عکس
         self.img_label = QLabel()
         self.img_label.setFixedSize(100, 100)
         self.img_label.setStyleSheet("background-color: #1A202C; border-radius: 6px; color: #718096;")
@@ -35,10 +42,9 @@ class ResultCard(QFrame):
         self.img_label.setText("📷 بدون عکس")
         self.img_label.setScaledContents(True)
 
-        # لایوت اطلاعات متنی (سمت راست عکس)
         info_layout = QVBoxLayout()
 
-        site_label = QLabel(f"🌐 منبع: {site_name}  |  🎮 پلتفرم / نسخه: {version}")
+        site_label = QLabel(f"🌐 منبع: {site_name}  |  🎮 دسته‌بندی / نسخه: {version}")
         site_label.setStyleSheet("color: #00ADB5; font-size: 11px; font-weight: bold;")
         
         title_label = QLabel(title)
@@ -53,19 +59,16 @@ class ResultCard(QFrame):
         info_layout.addWidget(title_label)
         info_layout.addWidget(self.btn_fetch)
 
-        # اضافه کردن عکس و اطلاعات متنی کنار هم
         top_layout.addWidget(self.img_label)
         top_layout.addLayout(info_layout)
 
         self.main_layout.addLayout(top_layout)
 
-        # بخش لینک‌ها (پایین)
         self.links_container = QWidget()
         self.links_layout = QVBoxLayout(self.links_container)
         self.links_container.hide()
         self.main_layout.addWidget(self.links_container)
 
-        # بارگذاری عکس در ترد مجزا
         if self.image_url:
             self.img_worker = ImageDownloader(self.image_url)
             self.img_worker.image_loaded.connect(self.set_image)
@@ -132,33 +135,76 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Game Searcher Pro")
-        self.resize(850, 680)
+        self.resize(880, 680)
 
         self.current_page = 1
         self.has_next = False
+        self.selected_category = "ALL"
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         self.main_layout = QVBoxLayout(central_widget)
 
+        # نوار بالای سرچ
         search_layout = QHBoxLayout()
+
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("نام بازی را وارد کنید...")
+        self.search_input.setPlaceholderText("نام بازی یا برنامه را وارد کنید...")
         self.search_input.returnPressed.connect(lambda: self.start_search(page=1))
 
-        self.category_combo = QComboBox()
-        self.category_combo.addItem("همه پلتفرم‌ها", "ALL")
-        self.category_combo.addItem("بازی PC", "PC")
-        self.category_combo.addItem("بازی کنسول", "CONSOLE")
+        # دکمه کنسول
+        self.btn_console = HoverToolButton()
+        self.btn_console.setText("🎮 کنسول ▾")
+        self.btn_console.setCursor(Qt.CursorShape.PointingHandCursor)
 
+        console_menu = QMenu(self.btn_console)
+        act_ps = QAction("🔵 پلی‌استیشن (PS4 / PS5)", self)
+        act_ps.triggered.connect(lambda: self.change_category("CONSOLE_PS", "🔵 کنسول (PS) ▾"))
+
+        act_xbox = QAction("🟢 ایکس‌باکس (XBOX)", self)
+        act_xbox.triggered.connect(lambda: self.change_category("CONSOLE_XBOX", "🟢 کنسول (XBOX) ▾"))
+
+        act_nintendo = QAction("🔴 نینتندو (Switch)", self)
+        act_nintendo.triggered.connect(lambda: self.change_category("CONSOLE_NINTENDO", "🔴 کنسول (Nintendo) ▾"))
+
+        console_menu.addAction(act_ps)
+        console_menu.addAction(act_xbox)
+        console_menu.addAction(act_nintendo)
+        self.btn_console.setMenu(console_menu)
+
+        # دکمه PC
+        self.btn_pc = HoverToolButton()
+        self.btn_pc.setText("💻 کامپیوتر (PC) ▾")
+        self.btn_pc.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        pc_menu = QMenu(self.btn_pc)
+        act_pair = QAction("👥 جفت (بازی و برنامه)", self)
+        act_pair.triggered.connect(lambda: self.change_category("PC_ALL", "👥 PC (جفت) ▾"))
+
+        act_game = QAction("🎮 بازی PC", self)
+        act_game.triggered.connect(lambda: self.change_category("PC_GAME", "🎮 PC (بازی) ▾"))
+
+        act_app = QAction("🖥️ برنامه PC", self)
+        act_app.triggered.connect(lambda: self.change_category("PC_SOFTWARE", "🖥️ PC (برنامه) ▾"))
+
+        pc_menu.addAction(act_pair)
+        pc_menu.addAction(act_game)
+        pc_menu.addAction(act_app)
+        self.btn_pc.setMenu(pc_menu)
+
+        # دکمه جستجو
         self.search_btn = QPushButton("جستجو")
         self.search_btn.clicked.connect(lambda: self.start_search(page=1))
 
+        self.update_filter_buttons_style()
+
         search_layout.addWidget(self.search_input)
-        search_layout.addWidget(self.category_combo)
+        search_layout.addWidget(self.btn_console)
+        search_layout.addWidget(self.btn_pc)
         search_layout.addWidget(self.search_btn)
         self.main_layout.addLayout(search_layout)
 
+        # بخش نتایج
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll_content = QWidget()
@@ -166,6 +212,7 @@ class MainWindow(QMainWindow):
         self.scroll.setWidget(self.scroll_content)
         self.main_layout.addWidget(self.scroll)
 
+        # نوار صفحه‌بندی
         self.pagination_container = QWidget()
         self.pagination_layout = QHBoxLayout(self.pagination_container)
         self.pagination_layout.setContentsMargins(0, 0, 0, 0)
@@ -193,6 +240,32 @@ class MainWindow(QMainWindow):
         self.main_layout.addWidget(self.pagination_container)
         self.pagination_container.hide()
 
+    def change_category(self, cat_code, btn_label):
+        self.selected_category = cat_code
+        if cat_code.startswith("CONSOLE_"):
+            self.btn_console.setText(btn_label)
+            self.btn_pc.setText("💻 کامپیوتر (PC) ▾")
+        elif cat_code.startswith("PC_"):
+            self.btn_pc.setText(btn_label)
+            self.btn_console.setText("🎮 کنسول ▾")
+
+        self.update_filter_buttons_style()
+        self.start_search(page=1)
+
+    def update_filter_buttons_style(self):
+        active_style = "background-color: #00ADB5; color: white; font-weight: bold; padding: 6px 12px; border-radius: 4px;"
+        default_style = "background-color: #393E46; color: #EEEEEE; padding: 6px 12px; border-radius: 4px;"
+
+        if self.selected_category.startswith("CONSOLE_"):
+            self.btn_console.setStyleSheet(active_style + " QToolButton::menu-indicator { image: none; }")
+            self.btn_pc.setStyleSheet(default_style + " QToolButton::menu-indicator { image: none; }")
+        elif self.selected_category.startswith("PC_"):
+            self.btn_console.setStyleSheet(default_style + " QToolButton::menu-indicator { image: none; }")
+            self.btn_pc.setStyleSheet(active_style + " QToolButton::menu-indicator { image: none; }")
+        else:
+            self.btn_console.setStyleSheet(default_style + " QToolButton::menu-indicator { image: none; }")
+            self.btn_pc.setStyleSheet(default_style + " QToolButton::menu-indicator { image: none; }")
+
     def start_search(self, page=1):
         game_name = self.search_input.text().strip()
         if not game_name:
@@ -206,11 +279,18 @@ class MainWindow(QMainWindow):
             if widget:
                 widget.deleteLater()
 
-        self.search_btn.setEnabled(False)
-        self.search_btn.setText("در حال جستجو...")
+        # بررسی وجود اطلاعات در Cache
+        is_cached = (
+            game_name == shared_scraper.last_query and 
+            self.selected_category == shared_scraper.last_category and 
+            page in shared_scraper.page_cache
+        )
 
-        selected_category = self.category_combo.currentData()
-        self.worker = SearchWorker(game_name, category=selected_category, page_num=self.current_page)
+        if not is_cached:
+            self.search_btn.setEnabled(False)
+            self.search_btn.setText("در حال جستجو...")
+
+        self.worker = SearchWorker(game_name, category=self.selected_category, page_num=self.current_page)
         self.worker.results_found.connect(self.display_results)
         self.worker.finished.connect(self.search_finished)
         self.worker.start()
@@ -222,17 +302,16 @@ class MainWindow(QMainWindow):
 
         if status == 'NOT_FOUND' or status == 'EMPTY':
             if self.current_page > 1:
-                QMessageBox.warning(self, "خطا", f"صفحه شماره {self.current_page} وجود ندارد یا خالی است!")
+                QMessageBox.warning(self, "اطلاع", f"نتیجه دیگری در صفحه {self.current_page} یافت نشد.")
                 self.start_search(page=self.current_page - 1)
                 return
             else:
                 self.pagination_container.hide()
-                no_res = QLabel("هیچ نتایجی پیدا نشد.")
+                no_res = QLabel("هیچ نتایجی مطابق فیلتر یافت نشد.")
                 no_res.setStyleSheet("color: white;")
                 self.results_layout.addWidget(no_res)
                 return
 
-        # پاس دادن آدرس عکس به کارت نتیجه
         for item in results:
             card = ResultCard(
                 site_name=item['site'],
@@ -246,7 +325,7 @@ class MainWindow(QMainWindow):
         self.pagination_container.show()
 
         enable_prev = self.current_page > 1
-        enable_next = self.has_next and len(results) > 0
+        enable_next = self.has_next and len(results) >= 10
         self.update_pagination_buttons(enable_prev=enable_prev, enable_next=enable_next)
 
     def update_pagination_buttons(self, enable_prev, enable_next):

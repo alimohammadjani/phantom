@@ -3,6 +3,8 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from core.scraper import GameScraper
 
+shared_scraper = GameScraper()
+
 class SearchWorker(QThread):
     results_found = pyqtSignal(dict)
     finished = pyqtSignal()
@@ -12,10 +14,15 @@ class SearchWorker(QThread):
         self.game_name = game_name
         self.category = category
         self.page_num = page_num
-        self.scraper = GameScraper()
+        self.scraper = shared_scraper
 
     def run(self):
-        data = self.scraper.search_downloadha(self.game_name, self.category, self.page_num)
+        data = self.scraper.search_downloadha_paginated(
+            query=self.game_name, 
+            category=self.category, 
+            app_page_num=self.page_num,
+            target_count=10
+        )
         self.results_found.emit(data)
         self.finished.emit()
 
@@ -25,13 +32,12 @@ class FetchLinksWorker(QThread):
     def __init__(self, post_url):
         super().__init__()
         self.post_url = post_url
-        self.scraper = GameScraper()
+        self.scraper = shared_scraper
 
     def run(self):
         data = self.scraper.fetch_post_download_links(self.post_url)
         self.links_found.emit(data)
 
-# --- کلاس جدید برای دانلود عکس بدون درگیر کردن UI ---
 class ImageDownloader(QThread):
     image_loaded = pyqtSignal(QPixmap)
 
