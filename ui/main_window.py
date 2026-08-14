@@ -1,31 +1,28 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QLineEdit, QPushButton, QScrollArea, QLabel, QFrame, QMessageBox)
+                             QLineEdit, QPushButton, QScrollArea, QLabel, QFrame, QComboBox)
 from PyQt6.QtCore import Qt
 import webbrowser
 from core.worker import SearchWorker, FetchLinksWorker
 
+# کلاس ResultCard بدون تغییر می‌مونه... (همون کد قبلی)
 class ResultCard(QFrame):
     def __init__(self, site_name, title, post_url, version):
         super().__init__()
         self.post_url = post_url
         self.setObjectName("ResultCard")
-        
         self.main_layout = QVBoxLayout(self)
 
-        # اطلاعات سربرگ
-        site_label = QLabel(f"🌐 منبع: {site_name}  |  🎮 نسخه: {version}")
+        site_label = QLabel(f"🌐 منبع: {site_name}  |  🎮 پلتفرم / نسخه: {version}")
         site_label.setStyleSheet("color: #00ADB5; font-size: 11px; font-weight: bold;")
         
         title_label = QLabel(title)
         title_label.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 14px;")
         title_label.setWordWrap(True)
 
-        # دکمه نمایش لینک‌های دانلود
         self.btn_fetch = QPushButton("📂 مشاهده و دریافت لینک‌های دانلود")
         self.btn_fetch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_fetch.clicked.connect(self.load_download_links)
 
-        # کانتینر برای لینک‌های دانلود (در ابتدا مخفی است)
         self.links_container = QWidget()
         self.links_layout = QVBoxLayout(self.links_container)
         self.links_container.hide()
@@ -36,7 +33,6 @@ class ResultCard(QFrame):
         self.main_layout.addWidget(self.links_container)
 
     def load_download_links(self):
-        # اگر قبلا باز شده بود، با کلیک مجدد مخفی کن
         if not self.links_container.isHidden():
             self.links_container.hide()
             self.btn_fetch.setText("📂 مشاهده و دریافت لینک‌های دانلود")
@@ -45,7 +41,6 @@ class ResultCard(QFrame):
         self.btn_fetch.setEnabled(False)
         self.btn_fetch.setText("در حال استخراج لینک‌ها...")
 
-        # اجرای ترد برای گرفتن لینک‌ها
         self.fetch_worker = FetchLinksWorker(self.post_url)
         self.fetch_worker.links_found.connect(self.display_links)
         self.fetch_worker.start()
@@ -54,7 +49,6 @@ class ResultCard(QFrame):
         self.btn_fetch.setEnabled(True)
         self.btn_fetch.setText("بستن لینک‌ها 🔼")
 
-        # پاک کردن لینک‌های قبلی در صورت وجود
         for i in reversed(range(self.links_layout.count())):
             widget = self.links_layout.itemAt(i).widget()
             if widget:
@@ -66,12 +60,10 @@ class ResultCard(QFrame):
             no_link_lbl.setStyleSheet("color: #FF5722;")
             self.links_layout.addWidget(no_link_lbl)
         else:
-            # نمایش رمز فایل‌ها
             pass_lbl = QLabel(f"🔑 رمز فایل‌ها: {data.get('password', 'www.downloadha.com')}")
             pass_lbl.setStyleSheet("color: #FFD369; font-weight: bold; margin-top: 5px;")
             self.links_layout.addWidget(pass_lbl)
 
-            # ایجاد دکمه برای هر لینک دانلود
             for link_item in links:
                 btn_link = QPushButton(f"📥 {link_item['text']}")
                 btn_link.setStyleSheet("""
@@ -102,16 +94,24 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         self.main_layout = QVBoxLayout(central_widget)
 
-        # نوار جستجو
+        # نوار جستجو + منوی کشویی انتخاب پلتفرم
         search_layout = QHBoxLayout()
+        
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("نام بازی را وارد کنید (مثلا: Resident Evil)...")
+        self.search_input.setPlaceholderText("نام بازی را وارد کنید (مثلا: FIFA یا GTA)...")
         self.search_input.returnPressed.connect(self.start_search)
+
+        # کومبوباکس دسته‌بندی
+        self.category_combo = QComboBox()
+        self.category_combo.addItem("همه پلتفرم‌ها", "ALL")
+        self.category_combo.addItem("بازی PC", "PC")
+        self.category_combo.addItem("بازی کنسول (PS/Xbox/Switch)", "CONSOLE")
         
         self.search_btn = QPushButton("جستجو")
         self.search_btn.clicked.connect(self.start_search)
 
         search_layout.addWidget(self.search_input)
+        search_layout.addWidget(self.category_combo)
         search_layout.addWidget(self.search_btn)
         self.main_layout.addLayout(search_layout)
 
@@ -129,6 +129,9 @@ class MainWindow(QMainWindow):
         if not game_name:
             return
 
+        # گرفتن ارزش (Value) پلتفرم انتخابی
+        selected_category = self.category_combo.currentData()
+
         for i in reversed(range(self.results_layout.count())): 
             widget = self.results_layout.itemAt(i).widget()
             if widget:
@@ -137,14 +140,15 @@ class MainWindow(QMainWindow):
         self.search_btn.setEnabled(False)
         self.search_btn.setText("در حال جستجو...")
 
-        self.worker = SearchWorker(game_name)
+        # ارسال کلمه و دسته‌بندی به ترد
+        self.worker = SearchWorker(game_name, category=selected_category)
         self.worker.results_found.connect(self.display_results)
         self.worker.finished.connect(self.search_finished)
         self.worker.start()
 
     def display_results(self, results):
         if not results:
-            no_res = QLabel("هیچ نتایجی پیدا نشد.")
+            no_res = QLabel("هیچ نتایجی برای این پلتفرم یافت نشد.")
             no_res.setStyleSheet("color: white;")
             self.results_layout.addWidget(no_res)
             return
