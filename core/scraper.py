@@ -10,9 +10,6 @@ class GameScraper:
         }
 
     def search_downloadha(self, query, category="ALL", page_num=1):
-        """
-        جستجوی یک صفحه خاص و بازگرداندن نتایج به همراه وضعیت صفحه
-        """
         results = []
         cleaned_query = query.strip().replace(' ', '+')
 
@@ -25,8 +22,6 @@ class GameScraper:
 
         try:
             response = requests.get(search_url, headers=self.headers, timeout=10)
-            
-            # اگر صفحه وجود نداشت (404 یا هر خطای دیگر)
             if response.status_code != 200:
                 return {'results': [], 'has_next': False, 'status': 'NOT_FOUND'}
 
@@ -38,26 +33,33 @@ class GameScraper:
                 for a_tag in titles:
                     href = a_tag.get('href', '')
                     title = a_tag.text.strip()
+                    img_tag = a_tag.find_parent().find_next('img') if a_tag.find_parent() else None
+                    img_src = img_tag.get('src', '') if img_tag else ''
+
                     if href and title and ('downloadha.com' in href or href.startswith('/')):
-                        item = self._format_post_data(title, href)
+                        item = self._format_post_data(title, href, img_src)
                         if self._match_category(title, category):
                             if not any(r['link'] == href for r in results):
                                 results.append(item)
             else:
                 for post in posts:
                     title_tag = post.select_one('h2 a, h3 a, h1 a, a.title')
+                    img_tag = post.select_one('img')
+                    img_src = ''
+                    if img_tag:
+                        # دریافت لینک تصویر حتی اگر Lazy-Load باشد
+                        img_src = img_tag.get('data-src') or img_tag.get('src') or ''
+
                     if title_tag:
                         title = title_tag.text.strip()
                         post_link = title_tag.get('href', '')
                         if post_link and self._match_category(title, category):
-                            item = self._format_post_data(title, post_link)
+                            item = self._format_post_data(title, post_link, img_src)
                             if not any(r['link'] == post_link for r in results):
                                 results.append(item)
 
-            # بررسی وجود صفحه بعدی در pagination سایت
             next_link = soup.select_one('a.next, a.next-page, .pagination .next')
             if next_link or len(results) > 0: 
-                # اگر المان صفحه بعد بود یا دست‌کم نتیجه داشتیم، احتمال صفحه بعد هست
                 has_next_page = True if next_link else False
 
         except Exception as e:
@@ -79,7 +81,7 @@ class GameScraper:
             return any(kw in title_upper for kw in console_keywords)
         return True
 
-    def _format_post_data(self, title, link):
+    def _format_post_data(self, title, link, img_src=""):
         version_info = "نسخه اصلی / نامشخص"
         title_upper = title.upper()
         if 'FITGIRL' in title_upper: version_info = "FitGirl Repack"
@@ -90,7 +92,7 @@ class GameScraper:
         elif 'PS5' in title_upper or 'PS4' in title_upper: version_info = "کنسول پلی‌استیشن"
         elif 'XBOX' in title_upper: version_info = "کنسول ایکس‌باکس"
 
-        return {'site': 'دانلودها', 'title': title, 'link': link, 'quality': version_info}
+        return {'site': 'دانلودها', 'title': title, 'link': link, 'quality': version_info, 'image': img_src}
 
     def fetch_post_download_links(self, post_url):
         download_data = {'links': [], 'password': 'www.downloadha.com'}

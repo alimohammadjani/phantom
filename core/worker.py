@@ -1,4 +1,6 @@
+import requests
 from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from core.scraper import GameScraper
 
 class SearchWorker(QThread):
@@ -28,3 +30,24 @@ class FetchLinksWorker(QThread):
     def run(self):
         data = self.scraper.fetch_post_download_links(self.post_url)
         self.links_found.emit(data)
+
+# --- کلاس جدید برای دانلود عکس بدون درگیر کردن UI ---
+class ImageDownloader(QThread):
+    image_loaded = pyqtSignal(QPixmap)
+
+    def __init__(self, image_url):
+        super().__init__()
+        self.image_url = image_url
+
+    def run(self):
+        if not self.image_url:
+            return
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(self.image_url, headers=headers, timeout=5)
+            if response.status_code == 200:
+                pixmap = QPixmap()
+                pixmap.loadFromData(response.content)
+                self.image_loaded.emit(pixmap)
+        except Exception as e:
+            print(f"[Image Load Error]: {e}")

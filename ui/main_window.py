@@ -2,35 +2,79 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLineEdit, QPushButton, QScrollArea, QLabel, QFrame, 
                              QComboBox, QInputDialog, QMessageBox)
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap
 import webbrowser
-from core.worker import SearchWorker, FetchLinksWorker
+from core.worker import SearchWorker, FetchLinksWorker, ImageDownloader
 
 class ResultCard(QFrame):
-    def __init__(self, site_name, title, post_url, version):
+    def __init__(self, site_name, title, post_url, version, image_url=""):
         super().__init__()
         self.post_url = post_url
+        self.image_url = image_url
         self.setObjectName("ResultCard")
+        self.setStyleSheet("""
+            #ResultCard {
+                background-color: #2D3748;
+                border-radius: 8px;
+                padding: 10px;
+                margin-bottom: 8px;
+            }
+        """)
+
+        # لایوت اصلی کارت (عمودی)
         self.main_layout = QVBoxLayout(self)
+
+        # لایوت افقی بالای کارت (تصویر + اطلاعات)
+        top_layout = QHBoxLayout()
+
+        # ساخت لیبل عکس
+        self.img_label = QLabel()
+        self.img_label.setFixedSize(100, 100)
+        self.img_label.setStyleSheet("background-color: #1A202C; border-radius: 6px; color: #718096;")
+        self.img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.img_label.setText("📷 بدون عکس")
+        self.img_label.setScaledContents(True)
+
+        # لایوت اطلاعات متنی (سمت راست عکس)
+        info_layout = QVBoxLayout()
 
         site_label = QLabel(f"🌐 منبع: {site_name}  |  🎮 پلتفرم / نسخه: {version}")
         site_label.setStyleSheet("color: #00ADB5; font-size: 11px; font-weight: bold;")
         
         title_label = QLabel(title)
-        title_label.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 14px;")
+        title_label.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 13px;")
         title_label.setWordWrap(True)
 
         self.btn_fetch = QPushButton("📂 مشاهده و دریافت لینک‌های دانلود")
         self.btn_fetch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_fetch.clicked.connect(self.load_download_links)
 
+        info_layout.addWidget(site_label)
+        info_layout.addWidget(title_label)
+        info_layout.addWidget(self.btn_fetch)
+
+        # اضافه کردن عکس و اطلاعات متنی کنار هم
+        top_layout.addWidget(self.img_label)
+        top_layout.addLayout(info_layout)
+
+        self.main_layout.addLayout(top_layout)
+
+        # بخش لینک‌ها (پایین)
         self.links_container = QWidget()
         self.links_layout = QVBoxLayout(self.links_container)
         self.links_container.hide()
-
-        self.main_layout.addWidget(site_label)
-        self.main_layout.addWidget(title_label)
-        self.main_layout.addWidget(self.btn_fetch)
         self.main_layout.addWidget(self.links_container)
+
+        # بارگذاری عکس در ترد مجزا
+        if self.image_url:
+            self.img_worker = ImageDownloader(self.image_url)
+            self.img_worker.image_loaded.connect(self.set_image)
+            self.img_worker.start()
+
+    def set_image(self, pixmap):
+        if not pixmap.isNull():
+            scaled = pixmap.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            self.img_label.setPixmap(scaled)
 
     def load_download_links(self):
         if not self.links_container.isHidden():
@@ -97,7 +141,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         self.main_layout = QVBoxLayout(central_widget)
 
-        # نوار بالای سرچ
         search_layout = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("نام بازی را وارد کنید...")
@@ -116,7 +159,6 @@ class MainWindow(QMainWindow):
         search_layout.addWidget(self.search_btn)
         self.main_layout.addLayout(search_layout)
 
-        # اسکرول اریا نتایج
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll_content = QWidget()
@@ -124,9 +166,6 @@ class MainWindow(QMainWindow):
         self.scroll.setWidget(self.scroll_content)
         self.main_layout.addWidget(self.scroll)
 
-        # -------------------------------------------------------------
-        # کانتینر نوار پایین (Pagination) - در ابتدا مخفی است
-        # -------------------------------------------------------------
         self.pagination_container = QWidget()
         self.pagination_layout = QHBoxLayout(self.pagination_container)
         self.pagination_layout.setContentsMargins(0, 0, 0, 0)
@@ -152,8 +191,6 @@ class MainWindow(QMainWindow):
         self.pagination_layout.addStretch()
 
         self.main_layout.addWidget(self.pagination_container)
-
-        # مخفی‌سازی اولیه نوار صفحه‌بندی تا قبل از سرچ
         self.pagination_container.hide()
 
     def start_search(self, page=1):
@@ -164,7 +201,6 @@ class MainWindow(QMainWindow):
         self.current_page = page
         self.page_label.setText(f"صفحه: {self.current_page}")
 
-        # پاک کردن نتایج قبلی
         for i in reversed(range(self.results_layout.count())): 
             widget = self.results_layout.itemAt(i).widget()
             if widget:
@@ -190,26 +226,25 @@ class MainWindow(QMainWindow):
                 self.start_search(page=self.current_page - 1)
                 return
             else:
-                self.pagination_container.hide() # عدم نمایش پجینیشن اگر نتیجه‌ای نبود
+                self.pagination_container.hide()
                 no_res = QLabel("هیچ نتایجی پیدا نشد.")
                 no_res.setStyleSheet("color: white;")
                 self.results_layout.addWidget(no_res)
                 return
 
-        # افزودن کارت‌های نتیجه
+        # پاس دادن آدرس عکس به کارت نتیجه
         for item in results:
             card = ResultCard(
                 site_name=item['site'],
                 title=item['title'],
                 post_url=item['link'],
-                version=item['quality']
+                version=item['quality'],
+                image_url=item.get('image', '')
             )
             self.results_layout.addWidget(card)
 
-        # حالا که نتایج دریافت شد، نوار صفحه‌بندی نمایش داده می‌شود
         self.pagination_container.show()
 
-        # تنظیم وضعیت دکمه‌ها
         enable_prev = self.current_page > 1
         enable_next = self.has_next and len(results) > 0
         self.update_pagination_buttons(enable_prev=enable_prev, enable_next=enable_next)
