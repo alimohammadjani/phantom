@@ -2,18 +2,19 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from core.scraper import GameScraper
 
 class SearchWorker(QThread):
-    results_found = pyqtSignal(list)
+    results_found = pyqtSignal(dict)
     finished = pyqtSignal()
 
-    def __init__(self, game_name, category="ALL"):
+    def __init__(self, game_name, category="ALL", page_num=1):
         super().__init__()
         self.game_name = game_name
         self.category = category
+        self.page_num = page_num
         self.scraper = GameScraper()
 
     def run(self):
-        results = self.scraper.search_downloadha(self.game_name, self.category)
-        self.results_found.emit(results)
+        data = self.scraper.search_downloadha(self.game_name, self.category, self.page_num)
+        self.results_found.emit(data)
         self.finished.emit()
 
 class FetchLinksWorker(QThread):
