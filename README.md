@@ -26,18 +26,6 @@ It scrapes post details in real-time, displays item metadata and thumbnail cover
 
 ---
 
-## Project Structure
-
-.
-├── core/
-│   ├── scraper.py       # Core scraping and categorizing logic
-│   └── worker.py        # QThread workers for async tasks
-├── main_window.py       # Main PyQt6 interface & components
-├── main.py              # Application entry point
-├── requirements.txt     # Dependency list
-└── README.md
-
----
 
 ## Installation & Setup
 
