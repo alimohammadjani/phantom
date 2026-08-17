@@ -138,6 +138,7 @@ class MainWindow(QMainWindow):
         self.resize(880, 680)
 
         self.current_page = 1
+        self.last_valid_page = 1  # ⭐️ ذخیره آخرین صفحه‌ای که نتایج معتبر داشت
         self.has_next = False
         self.selected_category = "ALL"
 
@@ -271,13 +272,9 @@ class MainWindow(QMainWindow):
         if not game_name:
             return
 
-        self.current_page = page
-        self.page_label.setText(f"صفحه: {self.current_page}")
-
-        for i in reversed(range(self.results_layout.count())): 
-            widget = self.results_layout.itemAt(i).widget()
-            if widget:
-                widget.deleteLater()
+        # ⭐️ نکته کلیدی: مقدار صفحه درخواستی را به عنوان صفحه هدف در نظر می‌گیریم
+        self.requested_page = page
+        self.page_label.setText(f"صفحه: {page}")
 
         # بررسی وجود اطلاعات در Cache
         is_cached = (
@@ -290,7 +287,8 @@ class MainWindow(QMainWindow):
             self.search_btn.setEnabled(False)
             self.search_btn.setText("در حال جستجو...")
 
-        self.worker = SearchWorker(game_name, category=self.selected_category, page_num=self.current_page)
+        # ارسال صفحه درخواستی به ورکر
+        self.worker = SearchWorker(game_name, category=self.selected_category, page_num=page)
         self.worker.results_found.connect(self.display_results)
         self.worker.finished.connect(self.search_finished)
         self.worker.start()
@@ -300,17 +298,44 @@ class MainWindow(QMainWindow):
         status = data.get('status', 'OK')
         self.has_next = data.get('has_next', False)
 
-        if status == 'NOT_FOUND' or status == 'EMPTY':
-            if self.current_page > 1:
-                QMessageBox.warning(self, "اطلاع", f"نتیجه دیگری در صفحه {self.current_page} یافت نشد.")
-                self.start_search(page=self.current_page - 1)
+        # ⭐️ اگر صفحه خالی بود یا نتیجه‌ای یافت نشد:
+        if status == 'NOT_FOUND' or status == 'EMPTY' or len(results) == 0:
+            # اگر کاربر روی صفحه دیگری بوده و الان به صفحه‌ای رفته که وجود ندارد (مثلاً با سه نقطه)
+            if self.requested_page != self.last_valid_page and self.last_valid_page >= 1:
+                QMessageBox.warning(
+                    self, 
+                    "اطلاع", 
+                    f"نتیجه‌ای در صفحه {self.requested_page} یافت نشد.\nبازگشت به آخرین صفحه معتبر (صفحه {self.last_valid_page})..."
+                )
+                # بازگشت دقیق به همان آخرین صفحه‌ای که در آن بود
+                self.start_search(page=self.last_valid_page)
+                return
+            elif self.requested_page > 1:
+                QMessageBox.warning(self, "اطلاع", f"نتیجه دیگری در صفحه {self.requested_page} یافت نشد.")
+                self.start_search(page=1)
                 return
             else:
                 self.pagination_container.hide()
+                # پاک‌سازی نتایج قبلی
+                for i in reversed(range(self.results_layout.count())): 
+                    widget = self.results_layout.itemAt(i).widget()
+                    if widget:
+                        widget.deleteLater()
                 no_res = QLabel("هیچ نتایجی مطابق فیلتر یافت نشد.")
-                no_res.setStyleSheet("color: white;")
+                no_res.setStyleSheet("color: white; font-size: 13px;")
                 self.results_layout.addWidget(no_res)
                 return
+
+        # ⭐️ وقتی نتایج با موفقیت دریافت شدند، صفحه جاری و آخرین صفحه معتبر را آپدیت می‌کنیم
+        self.current_page = self.requested_page
+        self.last_valid_page = self.current_page
+        self.page_label.setText(f"صفحه: {self.current_page}")
+
+        # پاک کردن کارت‌های قبلی فقط زمانی که نتایج جدید آماده نمایش هستند
+        for i in reversed(range(self.results_layout.count())): 
+            widget = self.results_layout.itemAt(i).widget()
+            if widget:
+                widget.deleteLater()
 
         for item in results:
             card = ResultCard(
@@ -352,6 +377,7 @@ class MainWindow(QMainWindow):
             min=1, 
             max=100
         )
+        # فقط در صورتی که کاربر عددی غیر از صفحه فعلی را تایید کرد سرچ شود
         if ok and page != self.current_page:
             self.start_search(page=page)
 
