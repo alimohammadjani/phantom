@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QScrollArea, QLabel, QFrame, 
-                             QInputDialog, QMessageBox, QToolButton, QMenu)
-from PyQt6.QtCore import Qt
+                             QInputDialog, QMessageBox, QToolButton, QMenu, QApplication,
+                             QGroupBox)
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPixmap, QAction
 import webbrowser
 from core.worker import SearchWorker, FetchLinksWorker, ImageDownloader, shared_scraper
@@ -22,13 +23,14 @@ class ResultCard(QFrame):
         super().__init__()
         self.post_url = post_url
         self.image_url = image_url
+        self.download_links = []
         self.setObjectName("ResultCard")
         self.setStyleSheet("""
             #ResultCard {
                 background-color: #2D3748;
                 border-radius: 8px;
                 padding: 10px;
-                margin-bottom: 8px;
+                margin-bottom: 10px;
             }
         """)
 
@@ -44,14 +46,14 @@ class ResultCard(QFrame):
 
         info_layout = QVBoxLayout()
 
-        site_label = QLabel(f"🌐 منبع: {site_name}  |  🎮 دسته‌بندی / نسخه: {version}")
+        site_label = QLabel(f"🌐 منبع: {site_name}  |  🎮 دسته‌بندی / کیفیت: {version}")
         site_label.setStyleSheet("color: #00ADB5; font-size: 11px; font-weight: bold;")
         
         title_label = QLabel(title)
         title_label.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 13px;")
         title_label.setWordWrap(True)
 
-        self.btn_fetch = QPushButton("📂 مشاهده و دریافت لینک‌های دانلود")
+        self.btn_fetch = QPushButton("📂 مشاهده و تفکیک نسخه‌ها و پارت‌های دانلود")
         self.btn_fetch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_fetch.clicked.connect(self.load_download_links)
 
@@ -82,51 +84,157 @@ class ResultCard(QFrame):
     def load_download_links(self):
         if not self.links_container.isHidden():
             self.links_container.hide()
-            self.btn_fetch.setText("📂 مشاهده و دریافت لینک‌های دانلود")
+            self.btn_fetch.setText("📂 مشاهده و تفکیک نسخه‌ها و پارت‌های دانلود")
             return
 
         self.btn_fetch.setEnabled(False)
-        self.btn_fetch.setText("در حال استخراج لینک‌ها...")
+        self.btn_fetch.setText("⏳ در حال استخراج و دسته‌بندی نسخه‌ها...")
 
         self.fetch_worker = FetchLinksWorker(self.post_url)
         self.fetch_worker.links_found.connect(self.display_links)
         self.fetch_worker.start()
 
+    def copy_single_link(self, url, btn):
+        clipboard = QApplication.clipboard()
+        clipboard.setText(url)
+        old_text = btn.text()
+        btn.setText("✅ کپی شد!")
+        btn.setStyleSheet("background-color: #00ADB5; color: white; padding: 5px 10px; border-radius: 4px; font-size: 11px;")
+        QTimer.singleShot(1500, lambda: self.reset_copy_btn(btn, old_text))
+
+    def reset_copy_btn(self, btn, text):
+        btn.setText(text)
+        btn.setStyleSheet("background-color: #393E46; color: #EEEEEE; padding: 5px 10px; border-radius: 4px; font-size: 11px;")
+
+    def copy_group_links(self, links_list, group_name):
+        if not links_list:
+            return
+        all_urls = "\n".join([l['url'] for l in links_list])
+        clipboard = QApplication.clipboard()
+        clipboard.setText(all_urls)
+        QMessageBox.information(self, "کپی موفق", f"✅ تمامی لینک‌های «{group_name}» کپی شدند.")
+
+    def group_links_by_version(self, links):
+        """دسته‌بندی هوشمند پارت‌ها بر اساس نسخه (مثلاً FitGirl, DODI, Setup, Update)"""
+        groups = {}
+        for link in links:
+            text = link.get('text', '')
+            # شناسایی نسخه بر اساس الگوهای متداول
+            version_key = "نسخه اصلی / عمومی"
+            if "fitgirl" in text.lower():
+                version_key = "نسخه فشرده FitGirl"
+            elif "dodi" in text.lower():
+                version_key = "نسخه فشرده DODI"
+            elif "rune" in text.lower():
+                version_key = "نسخه کامل RUNE"
+            elif "elamigos" in text.lower():
+                version_key = "نسخه ElAmigos"
+            elif "update" in text.lower() or "آپدیت" in text:
+                version_key = "آپدیت‌ها و پچ‌ها"
+            elif "dlc" in text.lower():
+                version_key = "بسته‌های الحاقی (DLC)"
+
+            if version_key not in groups:
+                groups[version_key] = []
+            groups[version_key].append(link)
+        return groups
+
     def display_links(self, data):
         self.btn_fetch.setEnabled(True)
-        self.btn_fetch.setText("بستن لینک‌ها 🔼")
+        self.btn_fetch.setText("بستن بخش لینک‌ها 🔼")
 
         for i in reversed(range(self.links_layout.count())):
             widget = self.links_layout.itemAt(i).widget()
             if widget:
                 widget.deleteLater()
 
-        links = data.get('links', [])
-        if not links:
-            no_link_lbl = QLabel("هیچ لینک مستقیم دانلودی یافت نشد.")
+        self.download_links = data.get('links', [])
+        if not self.download_links:
+            no_link_lbl = QLabel("هیچ لینک دانلودی برای این پست یافت نشد.")
             no_link_lbl.setStyleSheet("color: #FF5722;")
             self.links_layout.addWidget(no_link_lbl)
         else:
+            # نوار سراسری اطلاعات رمز و دکمه کپی همه
+            top_bar = QHBoxLayout()
             pass_lbl = QLabel(f"🔑 رمز فایل‌ها: {data.get('password', 'www.downloadha.com')}")
-            pass_lbl.setStyleSheet("color: #FFD369; font-weight: bold; margin-top: 5px;")
-            self.links_layout.addWidget(pass_lbl)
+            pass_lbl.setStyleSheet("color: #FFD369; font-weight: bold; font-size: 12px;")
+            
+            btn_copy_everything = QPushButton("📋 کپی کل لینک‌های همه نسخه‌ها")
+            btn_copy_everything.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_copy_everything.setStyleSheet("background-color: #00ADB5; color: white; font-size: 11px; padding: 5px 12px; border-radius: 4px; font-weight: bold;")
+            btn_copy_everything.clicked.connect(lambda: self.copy_group_links(self.download_links, "کل پست"))
 
-            for link_item in links:
-                btn_link = QPushButton(f"📥 {link_item['text']}")
-                btn_link.setStyleSheet("""
-                    QPushButton {
-                        background-color: #222831; 
-                        color: #EEEEEE; 
-                        text-align: left; 
-                        padding: 6px; 
+            top_bar.addWidget(pass_lbl)
+            top_bar.addStretch()
+            top_bar.addWidget(btn_copy_everything)
+            self.links_layout.addLayout(top_bar)
+
+            # تفکیک نسخه‌ها به صورت باکس‌های مجزا
+            grouped = self.group_links_by_version(self.download_links)
+
+            for group_name, group_links in grouped.items():
+                group_box = QGroupBox(f"📦 {group_name} ({len(group_links)} پارت)")
+                group_box.setStyleSheet("""
+                    QGroupBox {
+                        color: #00ADB5;
+                        font-weight: bold;
+                        font-size: 12px;
                         border: 1px solid #393E46;
+                        border-radius: 6px;
+                        margin-top: 10px;
+                        padding-top: 15px;
+                        background-color: #222831;
                     }
-                    QPushButton:hover { background-color: #393E46; }
+                    QGroupBox::title {
+                        subcontrol-origin: margin;
+                        left: 10px;
+                        padding: 0 5px;
+                    }
                 """)
-                btn_link.setCursor(Qt.CursorShape.PointingHandCursor)
-                url = link_item['url']
-                btn_link.clicked.connect(lambda checked, u=url: webbrowser.open(u))
-                self.links_layout.addWidget(btn_link)
+                g_layout = QVBoxLayout(group_box)
+
+                # دکمه کپی مخصوص این نسخه
+                btn_copy_this_group = QPushButton(f"📋 کپی همه پارت‌های {group_name}")
+                btn_copy_this_group.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn_copy_this_group.setStyleSheet("background-color: #393E46; color: #EEEEEE; font-size: 11px; padding: 4px 8px; border-radius: 4px; margin-bottom: 6px;")
+                btn_copy_this_group.clicked.connect(lambda checked, gl=group_links, gn=group_name: self.copy_group_links(gl, gn))
+                g_layout.addWidget(btn_copy_this_group)
+
+                # لیست پارت‌ها
+                for link_item in group_links:
+                    row_widget = QWidget()
+                    row_layout = QHBoxLayout(row_widget)
+                    row_layout.setContentsMargins(0, 2, 0, 2)
+
+                    url = link_item['url']
+                    text = link_item['text']
+
+                    btn_open = QPushButton(f"📥 {text}")
+                    btn_open.setStyleSheet("""
+                        QPushButton {
+                            background-color: #1A202C; 
+                            color: #EEEEEE; 
+                            text-align: left; 
+                            padding: 5px 8px; 
+                            border: 1px solid #2D3748;
+                            border-radius: 4px;
+                            font-size: 11px;
+                        }
+                        QPushButton:hover { background-color: #2D3748; }
+                    """)
+                    btn_open.setCursor(Qt.CursorShape.PointingHandCursor)
+                    btn_open.clicked.connect(lambda checked, u=url: webbrowser.open(u))
+
+                    btn_copy = QPushButton("📋 کپی")
+                    btn_copy.setStyleSheet("background-color: #2D3748; color: #EEEEEE; padding: 5px 10px; border-radius: 4px; font-size: 11px;")
+                    btn_copy.setCursor(Qt.CursorShape.PointingHandCursor)
+                    btn_copy.clicked.connect(lambda checked, u=url, b=btn_copy: self.copy_single_link(u, b))
+
+                    row_layout.addWidget(btn_open, stretch=4)
+                    row_layout.addWidget(btn_copy, stretch=1)
+                    g_layout.addWidget(row_widget)
+
+                self.links_layout.addWidget(group_box)
 
         self.links_container.show()
 
@@ -135,10 +243,11 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Game Searcher Pro")
-        self.resize(880, 680)
+        self.resize(900, 700)
 
         self.current_page = 1
-        self.last_valid_page = 1  # ⭐️ ذخیره آخرین صفحه‌ای که نتایج معتبر داشت
+        self.last_valid_page = 1
+        self.requested_page = 1
         self.has_next = False
         self.selected_category = "ALL"
 
@@ -272,11 +381,9 @@ class MainWindow(QMainWindow):
         if not game_name:
             return
 
-        # ⭐️ نکته کلیدی: مقدار صفحه درخواستی را به عنوان صفحه هدف در نظر می‌گیریم
         self.requested_page = page
         self.page_label.setText(f"صفحه: {page}")
 
-        # بررسی وجود اطلاعات در Cache
         is_cached = (
             game_name == shared_scraper.last_query and 
             self.selected_category == shared_scraper.last_category and 
@@ -287,7 +394,6 @@ class MainWindow(QMainWindow):
             self.search_btn.setEnabled(False)
             self.search_btn.setText("در حال جستجو...")
 
-        # ارسال صفحه درخواستی به ورکر
         self.worker = SearchWorker(game_name, category=self.selected_category, page_num=page)
         self.worker.results_found.connect(self.display_results)
         self.worker.finished.connect(self.search_finished)
@@ -298,16 +404,13 @@ class MainWindow(QMainWindow):
         status = data.get('status', 'OK')
         self.has_next = data.get('has_next', False)
 
-        # ⭐️ اگر صفحه خالی بود یا نتیجه‌ای یافت نشد:
         if status == 'NOT_FOUND' or status == 'EMPTY' or len(results) == 0:
-            # اگر کاربر روی صفحه دیگری بوده و الان به صفحه‌ای رفته که وجود ندارد (مثلاً با سه نقطه)
             if self.requested_page != self.last_valid_page and self.last_valid_page >= 1:
                 QMessageBox.warning(
                     self, 
                     "اطلاع", 
                     f"نتیجه‌ای در صفحه {self.requested_page} یافت نشد.\nبازگشت به آخرین صفحه معتبر (صفحه {self.last_valid_page})..."
                 )
-                # بازگشت دقیق به همان آخرین صفحه‌ای که در آن بود
                 self.start_search(page=self.last_valid_page)
                 return
             elif self.requested_page > 1:
@@ -316,7 +419,6 @@ class MainWindow(QMainWindow):
                 return
             else:
                 self.pagination_container.hide()
-                # پاک‌سازی نتایج قبلی
                 for i in reversed(range(self.results_layout.count())): 
                     widget = self.results_layout.itemAt(i).widget()
                     if widget:
@@ -326,12 +428,10 @@ class MainWindow(QMainWindow):
                 self.results_layout.addWidget(no_res)
                 return
 
-        # ⭐️ وقتی نتایج با موفقیت دریافت شدند، صفحه جاری و آخرین صفحه معتبر را آپدیت می‌کنیم
         self.current_page = self.requested_page
         self.last_valid_page = self.current_page
         self.page_label.setText(f"صفحه: {self.current_page}")
 
-        # پاک کردن کارت‌های قبلی فقط زمانی که نتایج جدید آماده نمایش هستند
         for i in reversed(range(self.results_layout.count())): 
             widget = self.results_layout.itemAt(i).widget()
             if widget:
@@ -377,7 +477,6 @@ class MainWindow(QMainWindow):
             min=1, 
             max=100
         )
-        # فقط در صورتی که کاربر عددی غیر از صفحه فعلی را تایید کرد سرچ شود
         if ok and page != self.current_page:
             self.start_search(page=page)
 
